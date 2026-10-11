@@ -1,0 +1,203 @@
+{
+  "info": {
+    "name": "Nursery Attendance API",
+    "description": "Track A nursery attendance API. Start Laravel with php artisan serve and initialize demo data with php artisan migrate --seed. Edit the collection variables to target your server and tenant. Run requests in order: check in, list occupants, check out. Successful check-in saves check_in_id automatically. Run List current occupants again after checkout to see an empty room. Authentication is assumed upstream; requests use X-Tenant-ID and need no CSRF token. Duplicate active check-ins return 409; missing or foreign resources return 404; invalid child_id returns 422; missing or malformed tenant headers return 400. Checkout is idempotent. No /api URL prefix is used.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string",
+      "description": "Laravel server URL without a trailing slash."
+    },
+    {
+      "key": "tenant_id",
+      "value": "1",
+      "type": "string",
+      "description": "X-Tenant-ID header. Demo tenants: 1 Acorn, 2 Willow."
+    },
+    {
+      "key": "room_id",
+      "value": "1",
+      "type": "string",
+      "description": "Demo rooms: tenant 1 owns rooms 1 and 2; tenant 2 owns rooms 3 and 4."
+    },
+    {
+      "key": "child_id",
+      "value": "1",
+      "type": "string",
+      "description": "Demo children: tenant 1 owns children 1 and 2; tenant 2 owns children 3 and 4."
+    },
+    {
+      "key": "check_in_id",
+      "value": "",
+      "type": "string",
+      "description": "Automatically saved after successful check-in. Set manually to check out an existing visit."
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Check child into room",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-Tenant-ID",
+            "value": "{{tenant_id}}",
+            "type": "text"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/rooms/{{room_id}}/check-ins",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "rooms",
+            "{{room_id}}",
+            "check-ins"
+          ]
+        },
+        "description": "Creates an active visit and saves its ID to check_in_id. A child with any active visit receives 409; check out the existing visit first.",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"child_id\": {{child_id}}\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Check-in created\", function () { pm.response.to.have.status(201); });",
+              "if (pm.response.code === 201) {",
+              "    const data = pm.response.json().data;",
+              "    pm.collectionVariables.set(\"check_in_id\", String(data.id));",
+              "    pm.test(\"Visit is active\", function () {",
+              "        pm.expect(data.checked_out_at).to.equal(null);",
+              "        pm.expect(data.child_id).to.equal(Number(pm.variables.get(\"child_id\")));",
+              "        pm.expect(data.room_id).to.equal(Number(pm.variables.get(\"room_id\")));",
+              "    });",
+              "}"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "2. List current occupants",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Tenant-ID",
+            "value": "{{tenant_id}}",
+            "type": "text"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/rooms/{{room_id}}/occupants",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "rooms",
+            "{{room_id}}",
+            "occupants"
+          ]
+        },
+        "description": "Returns only active occupants of the tenant-owned room. Each item includes child_id, child_name, check_in_id, and checked_in_at. Run again after checkout to confirm the child has left."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Occupants retrieved\", function () { pm.response.to.have.status(200); });",
+              "if (pm.response.code === 200) {",
+              "    pm.test(\"Occupants is an array\", function () { pm.expect(pm.response.json().data).to.be.an(\"array\"); });",
+              "}"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "3. Check child out",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-Tenant-ID",
+            "value": "{{tenant_id}}",
+            "type": "text"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/check-ins/{{check_in_id}}/check-out",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "check-ins",
+            "{{check_in_id}}",
+            "check-out"
+          ]
+        },
+        "description": "Uses the ID saved by check-in. Returns the completed visit. Repeating this request returns the same checkout timestamp and does not affect later visits."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Checkout succeeded\", function () { pm.response.to.have.status(200); });",
+              "if (pm.response.code === 200) {",
+              "    const data = pm.response.json().data;",
+              "    pm.test(\"Visit is completed\", function () {",
+              "        pm.expect(data.checked_out_at).to.be.a(\"string\");",
+              "        pm.expect(data.id).to.equal(Number(pm.variables.get(\"check_in_id\")));",
+              "    });",
+              "}"
+            ]
+          }
+        }
+      ],
+      "response": []
+    }
+  ]
+}
