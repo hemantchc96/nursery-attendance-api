@@ -1,59 +1,91 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Nursery attendance API
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Track A of the take-home exercise. Laravel 12, PHP 8.2+, Composer, and SQLite (PHP pdo_sqlite enabled). No npm or frontend build is needed for the API.
 
-## About Laravel
+## Run
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+From a fresh checkout:
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+```sh
+composer install
+```
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+Copy `.env.example` to `.env` (`Copy-Item .env.example .env` in PowerShell, `cp .env.example .env` on macOS/Linux). Keep `DB_CONNECTION=sqlite`. Create an empty `database/database.sqlite` if absent (`New-Item database/database.sqlite -ItemType File` in PowerShell, `touch database/database.sqlite` on macOS/Linux).
 
-## Learning Laravel
+```sh
+php artisan key:generate
+php artisan migrate --seed
+php artisan serve
+```
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+Seed only a disposable demo database: the seeder uses fixed IDs. Fresh demo IDs:
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+| Group | X-Tenant-ID | Rooms | Children |
+| --- | --- | --- | --- |
+| Acorn | 1 | 1 Sunflowers, 2 Little Explorers | 1 Ava, 2 Noah |
+| Willow | 2 | 3 Sunflowers, 4 Little Explorers | 3 Mia, 4 Leo |
 
-## Laravel Sponsors
+## Tests
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+```sh
+php artisan test
+php vendor/bin/pint --test
+```
 
-### Premium Partners
+Tests use isolated SQLite storage, not the development database.
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+Feature tests cover validation, all three endpoints, tenant isolation, checkout retries, and re-entry. Database tests exercise composite tenant foreign keys and the active-visit unique index. A file-backed SQLite test uses an independent PHP process to check a request competing with an uncommitted check-in; it needs the usual CLI process functions enabled.
 
-## Contributing
+## API and decisions
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+Authentication is assumed to be handled upstream, including authorization to select the tenant. Every request supplies `X-Tenant-ID`; the app trusts that header as the exercise specifies. No login/token system is implemented. The group is the tenant; a child can attend any room in that group, including another nursery.
 
-## Code of Conduct
+| Endpoint | Success |
+| --- | --- |
+| POST /rooms/{room}/check-ins with `{ "child_id": 1 }` | 201 check-in record |
+| POST /check-ins/{id}/check-out | 200 check-in record |
+| GET /rooms/{room}/occupants | 200 current children |
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+There is no `/api` prefix and no CSRF token is required. Times are generated by the server in UTC.
 
-## Security Vulnerabilities
+Errors are JSON even without an Accept header: missing/malformed tenant header returns 400; unknown tenant or nonexistent/foreign room, child, or check-in returns 404 with `{ "message": "Resource not found." }`; invalid child_id returns 422 with `message` and `errors.child_id`; an active-child conflict returns 409 with a message. Foreign IDs never reveal or mutate another group's attendance.
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+A child already present in any room receives **409** on a new check-in, including the same room. Staff must check out the existing visit first. This preserves the recorded room and avoids silently moving a child on an accidental or repeated request. SQLite's partial unique index enforces one active check-in per tenant/child, including overlapping requests. A 5-second busy timeout allows a competing short writer to finish; unrelated database errors remain server errors. SQLite is the supported datastore for this exercise.
 
-## License
+Checkout is idempotent: repeating it returns the original checkout time. A retry against an old visit cannot close a newer visit. Completed visits remain as history. Occupants are ordered by child_id, exclude completed visits, and include the check_in_id needed for checkout.
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+### Example sequence (PowerShell)
+
+After a fresh demo seed, with the server running at localhost:8000:
+
+```powershell
+$headers = @{ 'X-Tenant-ID' = '1'; Accept = 'application/json' }
+$visit = Invoke-RestMethod -Method Post -Uri http://localhost:8000/rooms/1/check-ins -Headers $headers -ContentType 'application/json' -Body '{ "child_id": 1 }'
+Invoke-RestMethod -Uri http://localhost:8000/rooms/1/occupants -Headers $headers
+Invoke-RestMethod -Method Post -Uri "http://localhost:8000/check-ins/$($visit.data.id)/check-out" -Headers $headers
+Invoke-RestMethod -Uri http://localhost:8000/rooms/1/occupants -Headers $headers
+```
+
+Check-in and checkout return:
+
+```json
+{ "data": { "id": 1, "room_id": 1, "child_id": 1, "checked_in_at": "2026-10-11T09:00:00.000000Z", "checked_out_at": null } }
+```
+
+Checkout fills checked_out_at with its actual server time. Occupants while Ava is present:
+
+```json
+{ "data": [{ "child_id": 1, "child_name": "Ava", "check_in_id": 1, "checked_in_at": "2026-10-11T09:00:00.000000Z" }] }
+```
+
+The final occupant response is `{ "data": [] }`. IDs and times in these sample responses are illustrative; use the returned check-in ID. Under tenant 1, requesting room 3 or checking in child 3 returns 404.
+
+## Intentional omissions and more time
+
+This submission implements the backend track only. It omits a frontend, authentication, administration CRUD, child enrollment rules, reporting, pagination, and deployment tooling to keep the exercise focused. The seed data supplies the resources needed to exercise attendance. Tenant IDs in request bodies cannot override the header, and only child_id is accepted as check-in input.
+
+With more time, I would connect tenant selection to authenticated membership, add operational monitoring and a production database migration strategy, and extend contention testing to simultaneous HTTP check-ins and checkouts under sustained load. Supporting another database would require an equivalent active-visit uniqueness constraint and targeted conflict handling; the current migration and conflict mapping intentionally target SQLite.
+
+## AI use
+
+Codex helped extract the brief, create the OpenSpec plan, implement the API and tests, and draft this README. The implementation uses rejection of duplicate active attendance and idempotent checkout as explicit decisions. Automated tests and formatting checks were used to validate the generated code. No human review or rejection of AI output is claimed here; the submitter should review the code and update this note to describe any changes they personally make before submission.
